@@ -56,6 +56,32 @@ def test_page_size(app, indexed_records, search_url):
         assert 'message' in get_json(res)
 
 
+def test_pageno_listviewnum(app, indexed_records, search_url):
+    """Test page and size parameters for opensearch."""
+    with app.test_client() as client:
+        # Limit records
+        res = client.get(search_url, query_string=dict(page_no=1, list_view_num=2))
+        assert_hits_len(res, 2)
+
+        # All records
+        res = client.get(search_url, query_string=dict(page_no=1, list_view_num=10))
+        assert_hits_len(res, len(indexed_records))
+
+        # Exceed max result window
+        res = client.get(search_url, query_string=dict(page_no=100, list_view_num=100))
+        assert res.status_code == 400
+        assert 'message' in get_json(res)
+
+        # size >> list_view_num
+        res = client.get(search_url, query_string=dict(page=1, page_no=1, size=2, list_view_num=4))
+        assert_hits_len(res, 2)
+
+        # page >> page_no
+        res = client.get(search_url, query_string=dict(page=100, page_no=10, size=100, list_view_num=100))
+        assert res.status_code == 400
+        assert 'message' in get_json(res)
+
+
 def test_pagination(app, indexed_records, search_url):
     """Test pagination."""
     with app.test_client() as client:
