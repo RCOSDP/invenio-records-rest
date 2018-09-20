@@ -430,8 +430,14 @@ class RecordsListResource(ContentNegotiatedMethodView):
         :returns: the search result containing hits and aggregations as
         returned by invenio-search.
         """
-        page = request.values.get('page', 1, type=int)
-        size = request.values.get('size', 10, type=int)
+        # list_view_num is parameters for Opensearch
+        page = request.values.get('page',
+                                  request.values.get('list_view_num', 1, type=int),
+                                  type=int)
+        # page_no is parameters for Opensearch
+        size = request.values.get('size',
+                                  request.values.get('page_no', 10, type=int),
+                                  type=int)
         if page * size >= self.max_result_window:
             raise MaxResultWindowRESTError()
 
