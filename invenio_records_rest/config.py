@@ -88,7 +88,8 @@ The structure of the dictionary is as follows:
             'default_endpoint_prefix': True,
             'default_media_type': 'application/json',
             'delete_permission_factory_imp': permission_check_factory(),
-            'item_route': ''/recods/<pid(record-pid-type):pid_value>'',
+            'item_route': ('/records/<pid(record-pid-type, '
+                           'record_class="mypackage.api:MyRecord"):pid_value>'),
             'links_factory_imp': ('invenio_records_rest.links:'
                                   'default_links_factory'),
             'list_route': '/records/',
@@ -114,6 +115,7 @@ The structure of the dictionary is as follows:
             'search_type': 'elasticsearch-doc-type',
             'suggesters': {
                 'my_url_param_to_complete': {
+                    '_source': ['specified_source_filtered_field'],
                     'completion': {
                         'field': 'suggest_byyear_elasticsearch_field',
                         'size': 10,
@@ -192,9 +194,11 @@ The structure of the dictionary is as follows:
 :param search_type: Name of the search type used when searching records.
 
 :param suggesters: Suggester fields configuration. Any element of the
-    dictionary represents a suggestion field. The key of the dictionary element
-    is used to identify the url query parameter. The ``field`` parameter
-    identifies the suggester field name in your elasticsearch schema.
+    dictionary represents a suggestion field. For each suggestion field we can
+    optionally specify the source filtering (appropriate for ES5) by using
+    ``_source``. The key of the dictionary element is used to identify the url
+    query parameter. The ``field`` parameter identifies the suggester field
+    name in your elasticsearch schema.
     To have more information about suggestion configuration, you can read
     suggesters section on ElasticSearch documentation.
 
@@ -359,3 +363,6 @@ RECORDS_REST_ELASTICSEARCH_ERROR_HANDLERS = {
     ),
 }
 """Handlers for ElasticSearch error codes."""
+
+RECORDS_REST_DEFAULT_RESULTS_SIZE = 10
+"""Default search results size."""

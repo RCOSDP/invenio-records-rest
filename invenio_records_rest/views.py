@@ -25,7 +25,6 @@ from invenio_db import db
 from invenio_indexer.api import RecordIndexer
 from invenio_pidstore import current_pidstore
 from invenio_pidstore.models import PersistentIdentifier
-from invenio_pidstore.resolver import Resolver
 from invenio_records.api import Record
 from invenio_rest import ContentNegotiatedMethodView
 from invenio_rest.decorators import require_content_types
@@ -39,7 +38,7 @@ from .errors import InvalidDataRESTError, InvalidQueryRESTError, \
     JSONSchemaValidationError, MaxResultWindowRESTError, \
     PatchJSONFailureRESTError, PIDResolveRESTError, \
     SuggestMissingContextRESTError, SuggestNoCompletionsRESTError, \
-    UnsupportedMediaRESTError
+    UnhandledElasticsearchError, UnsupportedMediaRESTError
 from .links import default_links_factory
 from .proxies import current_records_rest
 from .query import es_search_factory
@@ -95,7 +94,11 @@ def create_error_handlers(blueprint, error_handlers_registry=None):
         for cause_type, handler in handlers.items():
             if cause_type in cause_types:
                 return handler(error)
-        return error
+
+        # Default exception for unhandled errors
+        exception = UnhandledElasticsearchError()
+        current_app.logger.exception(error)  # Log the original stacktrace
+        return exception.get_response()
 
     for exc_or_code, handlers in error_handlers_registry.items():
         # Build full endpoint names and resolve handlers
@@ -193,7 +196,8 @@ def create_url_rules(endpoint, list_route=None, item_route=None,
     :param list_permission_factory_imp: Import path to factory that
         creates a list permission object for a given index/list.
     :param default_endpoint_prefix: ignored.
-    :param record_class: A record API class or importable string.
+    :param record_class: A record API class or importable string used when
+        creating new records.
     :param record_serializers: Serializers used for records.
     :param record_serializers_aliases: A mapping of query arg `format` values
         to valid mimetypes: dict(alias -> mimetype).
@@ -288,13 +292,8 @@ def create_url_rules(endpoint, list_route=None, item_route=None,
     search_serializers = {mime: obj_or_import_string(func)
                           for mime, func in search_serializers.items()}
 
-    resolver = Resolver(pid_type=pid_type, object_type='rec',
-                        getter=partial(record_class.get_record,
-                                       with_deleted=True))
-
     list_view = RecordsListResource.as_view(
         RecordsListResource.view_name.format(endpoint),
-        resolver=resolver,
         minter_name=pid_minter,
         pid_type=pid_type,
         pid_fetcher=pid_fetcher,
@@ -316,7 +315,6 @@ def create_url_rules(endpoint, list_route=None, item_route=None,
     )
     item_view = RecordResource.as_view(
         RecordResource.view_name.format(endpoint),
-        resolver=resolver,
         read_permission_factory=read_permission_factory,
         update_permission_factory=update_permission_factory,
         delete_permission_factory=delete_permission_factory,
@@ -464,7 +462,7 @@ class RecordsListResource(ContentNegotiatedMethodView):
 
     view_name = '{0}_list'
 
-    def __init__(self, resolver=None, minter_name=None, pid_type=None,
+    def __init__(self, minter_name=None, pid_type=None,
                  pid_fetcher=None, read_permission_factory=None,
                  create_permission_factory=None,
                  list_permission_factory=None,
@@ -487,7 +485,6 @@ class RecordsListResource(ContentNegotiatedMethodView):
             },
             default_media_type=default_media_type,
             **kwargs)
-        self.resolver = resolver
         self.pid_type = pid_type
         self.minter = current_pidstore.minters[minter_name]
         self.pid_fetcher = current_pidstore.fetchers[pid_fetcher]
@@ -515,8 +512,10 @@ class RecordsListResource(ContentNegotiatedMethodView):
         :returns: Search result containing hits and aggregations as
                   returned by invenio-search.
         """
+        default_results_size = current_app.config.get(
+            'RECORDS_REST_DEFAULT_RESULTS_SIZE', 10)
         page = request.values.get('page', 1, type=int)
-        size = request.values.get('size', 10, type=int)
+        size = request.values.get('size', default_results_size, type=int)
         if page * size >= self.max_result_window:
             raise MaxResultWindowRESTError()
 
@@ -619,16 +618,13 @@ class RecordResource(ContentNegotiatedMethodView):
 
     view_name = '{0}_item'
 
-    def __init__(self, resolver=None, read_permission_factory=None,
+    def __init__(self, read_permission_factory=None,
                  update_permission_factory=None,
                  delete_permission_factory=None, default_media_type=None,
                  links_factory=None,
                  loaders=None, search_class=None, indexer_class=None,
                  **kwargs):
-        """Constructor.
-
-        :param resolver: Persistent identifier resolver instance.
-        """
+        """Constructor."""
         super(RecordResource, self).__init__(
             method_serializers={
                 'DELETE': {'*/*': lambda *args: make_response(*args), },
@@ -641,7 +637,6 @@ class RecordResource(ContentNegotiatedMethodView):
             },
             default_media_type=default_media_type,
             **kwargs)
-        self.resolver = resolver
         self.search_class = search_class
         self.read_permission_factory = read_permission_factory
         self.update_permission_factory = update_permission_factory
@@ -841,7 +836,11 @@ class SuggestResource(MethodView):
         # Add completions
         s = self.search_class()
         for field, val, opts in completions:
-            s = s.suggest(field, val, **opts)
+            source = opts.pop('_source', None)
+            if source is not None and ES_VERSION[0] >= 5:
+                s = s.source(source).suggest(field, val, **opts)
+            else:
+                s = s.suggest(field, val, **opts)
 
         if ES_VERSION[0] == 2:
             # Execute search

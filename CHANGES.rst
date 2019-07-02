@@ -1,12 +1,40 @@
 ..
     This file is part of Invenio.
-    Copyright (C) 2015-2018 CERN.
+    Copyright (C) 2015-2019 CERN.
 
     Invenio is free software; you can redistribute it and/or modify it
     under the terms of the MIT License; see LICENSE file for more details.
 
 Changes
 =======
+
+Version 1.4.2 (released 2019-05-07)
+
+- Marshmallow JSON schema: add getter method to customize and retrieve the PID
+  field name per schema.
+
+Version 1.4.1 (released 2019-04-02)
+
+- Added ``RECORDS_REST_DEFAULT_RESULTS_SIZE`` variable to change the default
+  ``size`` of the search results. The default value remains ``10``.
+
+Version 1.4.0 (released 2019-02-22)
+
+- Removed unused resolver parameter from views classes.
+- Improved documentation of record_class in URL patterns.
+
+Version 1.3.0 (released 2018-12-14)
+
+- Enhance Elasticsearch error handling.
+- Refactor Marshmallow schemas to allow PID injection.
+
+Version 1.2.2 (released 2018-11-16)
+
+- Changes ``str`` to ``text_type`` on filter dsl.
+
+Version 1.2.1 (released 2018-09-17)
+
+- Adds source filtering support for ES 5.
 
 Version 1.2.0 (released 2018-08-24)
 
