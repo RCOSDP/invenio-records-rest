@@ -514,8 +514,14 @@ class RecordsListResource(ContentNegotiatedMethodView):
         """
         default_results_size = current_app.config.get(
             'RECORDS_REST_DEFAULT_RESULTS_SIZE', 10)
-        page = request.values.get('page', 1, type=int)
-        size = request.values.get('size', default_results_size, type=int)
+        # page_no is parameters for Opensearch
+        page = request.values.get('page',
+                                  request.values.get('page_no', 1, type=int),
+                                  type=int)
+        # list_view_num is parameters for Opensearch
+        size = request.values.get('size',
+                                  request.values.get('list_view_num', 10, type=int),
+                                  type=int)
         if page * size >= self.max_result_window:
             raise MaxResultWindowRESTError()
 
