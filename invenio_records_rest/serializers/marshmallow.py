@@ -12,10 +12,10 @@
 from __future__ import absolute_import, print_function
 
 from ..schemas import RecordSchemaJSONV1
-from .base import TransformerMixinInterface
+from .base import PreprocessorMixin, TransformerMixinInterface
 
 
-class MarshmallowMixin(TransformerMixinInterface):
+class MarshmallowMixin(PreprocessorMixin):
     """Base class for marshmallow serializers."""
 
     def __init__(self, schema_class=RecordSchemaJSONV1, **kwargs):
