@@ -1,26 +1,10 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2016 CERN.
+# Copyright (C) 2016-2018 CERN.
 #
-# Invenio is free software; you can redistribute it
-# and/or modify it under the terms of the GNU General Public License as
-# published by the Free Software Foundation; either version 2 of the
-# License, or (at your option) any later version.
-#
-# Invenio is distributed in the hope that it will be
-# useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Invenio; if not, write to the
-# Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
-# MA 02111-1307, USA.
-#
-# In applying this license, CERN does not
-# waive the privileges and immunities granted to it by virtue of its status
-# as an Intergovernmental Organization or submit itself to any jurisdiction.
+# Invenio is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
 
 """CSL Citation Formatter serializer for records."""
 
@@ -42,7 +26,7 @@ from ..errors import StyleNotFoundRESTError
 try:
     from citeproc_styles import get_style_filepath
     from citeproc_styles.errors import StyleNotFoundError
-except:
+except BaseException:
     import warnings
     warnings.warn('citeproc_styles not found. '
                   'Please install to enable Citeproc Serialization.')
@@ -77,10 +61,11 @@ class CiteprocSerializer(object):
         """Initialize the inner record serializer.
 
         :param serializer: Serializer object that does the record serialization
-        to a format that `citeproc-py` can process (CSL-JSON or BibTeX). The
-        object has to implement a `serialize` method that matches the signature
-        of the `serialize` method of this class.
-        :param record_format: Format that the serializer produces
+            to a format that `citeproc-py` can process (CSL-JSON or BibTeX).
+            The object has to implement a `serialize` method that matches the
+            signature of the `serialize` method of this class.
+        :param record_format: Format that the serializer produces.
+
         """
         assert record_format in self._valid_formats
 
@@ -125,8 +110,8 @@ class CiteprocSerializer(object):
 
     def _clean_result(self, text):
         """Remove double spaces, punctuation and escapes apostrophes."""
-        text = re.sub('\s\s+', ' ', text)
-        text = re.sub('\.\.+', '.', text)
+        text = re.sub(r'\s\s+', ' ', text)
+        text = re.sub(r'\.\.+', '.', text)
         text = text.replace("'", "\\'")
         return text
 

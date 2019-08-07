@@ -1,43 +1,28 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2016 CERN.
+# Copyright (C) 2016-2018 CERN.
 #
-# Invenio is free software; you can redistribute it
-# and/or modify it under the terms of the GNU General Public License as
-# published by the Free Software Foundation; either version 2 of the
-# License, or (at your option) any later version.
-#
-# Invenio is distributed in the hope that it will be
-# useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Invenio; if not, write to the
-# Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
-# MA 02111-1307, USA.
-#
-# In applying this license, CERN does not
-# waive the privileges and immunities granted to it by virtue of its status
-# as an Intergovernmental Organization or submit itself to any jurisdiction.
+# Invenio is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
 
-r"""Sorter factory for REST API.
+r"""Sorter factories for REST API.
 
 The default sorter factory allows you to define possible sort options in
-the ``RECORDS_REST_SORT_OPTIONS`` configuration variable. The sort options
-are defined per index alias (e.g. ``records``). If more fine grained control
-is needed a custom sorter factory can be provided to Records-REST instead.
+the :data:`invenio_records_rest.config.RECORDS_REST_SORT_OPTIONS`
+configuration variable. The sort options are defined per index alias
+(e.g. ``records``). If more fine grained control is needed a custom sorter
+factory can be provided to Records-REST instead.
 
 See Elasticsearch Reference Manual for full details of sorting capabilities:
-https://www.elastic.co/guide/en/elasticsearch/reference/2.x\
-/search-request-sort.html
+https://www.elastic.co/guide/en/elasticsearch/reference/2.4/search-request-sort.html
 """
 
 from __future__ import absolute_import, print_function
 
 import copy
 
+import six
 from flask import current_app, request
 
 
@@ -131,7 +116,8 @@ def default_sorter_factory(search, index):
 
     # Get default sorting if sort is not specified.
     if not urlfield:
-        has_query = request.values.get('q', type=str)
+        # cast to six.text_type to handle unicodes in Python 2
+        has_query = request.values.get('q', type=six.text_type)
         urlfield = current_app.config['RECORDS_REST_DEFAULT_SORT'].get(
             index, {}).get('query' if has_query else 'noquery', '')
 

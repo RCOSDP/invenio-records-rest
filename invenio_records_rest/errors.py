@@ -1,28 +1,17 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2016 CERN.
+# Copyright (C) 2016-2018 CERN.
 #
-# Invenio is free software; you can redistribute it
-# and/or modify it under the terms of the GNU General Public License as
-# published by the Free Software Foundation; either version 2 of the
-# License, or (at your option) any later version.
-#
-# Invenio is distributed in the hope that it will be
-# useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Invenio; if not, write to the
-# Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
-# MA 02111-1307, USA.
-#
-# In applying this license, CERN does not
-# waive the privileges and immunities granted to it by virtue of its status
-# as an Intergovernmental Organization or submit itself to any jurisdiction.
+# Invenio is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
 
-"""Search errors."""
+"""Records REST errors.
+
+All error classes in this module are inheriting from
+:class:`invenio_rest.errors.RESTException` or
+:class:`invenio_rest.errors.RESTValidationError`.
+"""
 
 from __future__ import absolute_import, print_function
 
@@ -68,46 +57,55 @@ class StyleNotFoundRESTError(RESTException):
 #
 # PID
 #
-class PIDDoesNotExistRESTError(RESTException):
+class PIDRESTException(RESTException):
+    """Base REST API PID exception class."""
+
+    def __init__(self, pid_error=None, **kwargs):
+        """Initialize exception."""
+        super(RESTException, self).__init__(**kwargs)
+        self.pid_error = pid_error
+
+
+class PIDDoesNotExistRESTError(PIDRESTException):
     """Non-existent PID."""
 
     code = 404
     description = 'PID does not exist.'
 
 
-class PIDUnregisteredRESTError(RESTException):
+class PIDUnregisteredRESTError(PIDRESTException):
     """Unregistered PID."""
 
     code = 404
     description = 'PID is not registered.'
 
 
-class PIDDeletedRESTError(RESTException):
+class PIDDeletedRESTError(PIDRESTException):
     """Deleted PID."""
 
     code = 410
     description = 'PID has been deleted.'
 
 
-class PIDMissingObjectRESTError(RESTException):
+class PIDMissingObjectRESTError(PIDRESTException):
     """PID missing object."""
 
     code = 500
 
     def __init__(self, pid, **kwargs):
         """Initialize exception."""
-        super(RESTException, self).__init__(**kwargs)
+        super(PIDMissingObjectRESTError, self).__init__(**kwargs)
         self.description = 'No object assigned to {0}.'.format(pid)
 
 
-class PIDRedirectedRESTError(RESTException):
+class PIDRedirectedRESTError(PIDRESTException):
     """Invalid redirect for destination."""
 
     code = 500
 
     def __init__(self, pid_type=None, **kwargs):
         """Initialize exception."""
-        super(RESTException, self).__init__(**kwargs)
+        super(PIDRedirectedRESTError, self).__init__(**kwargs)
         self.description = (
             'Invalid redirect - pid_type{0}endpoint missing.'.format(
                 ' "{0}" '.format(pid_type) if pid_type else ' ')
@@ -185,7 +183,15 @@ class JSONSchemaValidationError(RESTValidationError):
     code = 400
 
     def __init__(self, error=None, **kwargs):
-        """Error description."""
+        """Initialize exception."""
         super(RESTValidationError, self).__init__(**kwargs)
         self.description = 'Validation error: {0}.'.format(
             error.message if error else '')
+
+
+class UnhandledElasticsearchError(RESTException):
+    """Failed to handle exception."""
+
+    code = 500
+    description = 'An internal server error occurred when handling the ' \
+                  'request.'

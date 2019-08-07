@@ -1,26 +1,10 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2015, 2016 CERN.
+# Copyright (C) 2015-2018 CERN.
 #
-# Invenio is free software; you can redistribute it
-# and/or modify it under the terms of the GNU General Public License as
-# published by the Free Software Foundation; either version 2 of the
-# License, or (at your option) any later version.
-#
-# Invenio is distributed in the hope that it will be
-# useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Invenio; if not, write to the
-# Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
-# MA 02111-1307, USA.
-#
-# In applying this license, CERN does not
-# waive the privileges and immunities granted to it by virtue of its status
-# as an Intergovernmental Organization or submit itself to any jurisdiction.
+# Invenio is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
 
 """Search tests."""
 
@@ -31,6 +15,7 @@ import re
 import pytest
 from flask import url_for
 from helpers import assert_hits_len, get_json, parse_url, to_relative_url
+from mock import patch
 
 
 def test_json_result_serializer(app, indexed_records, test_records,
@@ -50,7 +35,9 @@ def test_json_result_serializer(app, indexed_records, test_records,
 
         pid, db_record = test_records[0]
         assert record['id'] == int(pid.pid_value)
-        assert record['metadata'] == db_record.dumps()
+        db_record_dump = db_record.dumps()
+        for k in ['title', 'year', 'stars', 'control_number']:
+            assert record['metadata'][k] == db_record_dump[k]
 
 
 def test_page_size(app, indexed_records, search_url):
@@ -70,30 +57,23 @@ def test_page_size(app, indexed_records, search_url):
         assert 'message' in get_json(res)
 
 
-def test_pageno_listviewnum(app, indexed_records, search_url):
-    """Test page and size parameters for opensearch."""
+def test_page_size_without_size_in_request(
+        app, indexed_records, search_url):
+    """Test default size parameter."""
     with app.test_client() as client:
-        # Limit records
-        res = client.get(search_url, query_string=dict(page_no=1, list_view_num=2))
-        assert_hits_len(res, 2)
-
-        # All records
-        res = client.get(search_url, query_string=dict(page_no=1, list_view_num=10))
+        res = client.get(search_url, query_string=dict(page=1))
         assert_hits_len(res, len(indexed_records))
 
-        # Exceed max result window
-        res = client.get(search_url, query_string=dict(page_no=100, list_view_num=100))
-        assert res.status_code == 400
-        assert 'message' in get_json(res)
 
-        # size >> list_view_num
-        res = client.get(search_url, query_string=dict(page=1, page_no=1, size=2, list_view_num=4))
+def test_page_size_without_size_in_request_with_five_as_default(
+        app, indexed_records, search_url):
+    """Test custom default page parameter."""
+    config = {
+        'RECORDS_REST_DEFAULT_RESULTS_SIZE': 2
+    }
+    with app.test_client() as client, patch.dict(app.config, config):
+        res = client.get(search_url, query_string=dict(page=1))
         assert_hits_len(res, 2)
-
-        # page >> page_no
-        res = client.get(search_url, query_string=dict(page=100, page_no=10, size=100, list_view_num=100))
-        assert res.status_code == 400
-        assert 'message' in get_json(res)
 
 
 def test_pagination(app, indexed_records, search_url):
@@ -130,7 +110,7 @@ def test_page_links(app, indexed_records, search_url):
         assert_hits_len(res, 1)
 
         def parse_link_header(response):
-            """Parses the links from a REST response's HTTP header."""
+            """Parse the links from a REST response's HTTP header."""
             return {
                 k: v for (k, v) in
                 map(lambda s: re.findall(r'<(.*)>; rel="(.*)"', s)[0][::-1],
@@ -254,8 +234,32 @@ def test_query_wrong(app, indexed_records, search_url):
     )
 )], indirect=['app'])
 def test_elasticsearch_exception(app, indexed_records):
+    """Test elasticsearch exception."""
     with app.test_client() as client:
         res = client.get(url_for('invenio_records_rest.recid_list', q='i/o'))
         assert res.status_code == 400
         assert ('The syntax of the search query is invalid.' in
                 res.get_data(as_text=True))
+
+
+def test_dynamic_aggregation(app, indexed_records, search_url):
+    """Test invalid accept header."""
+    with app.test_client() as client:
+        def stars_aggs():
+            """Include only my deposits in the aggregation."""
+            return {
+                'terms': {
+                    'field': 'stars',
+                    'include': [4, 5]
+                }
+            }
+        app.config['RECORDS_REST_FACETS'][
+            'invenio-records-rest']['aggs']['test'] = stars_aggs
+        res = client.get(search_url, query_string={'q': ''})
+        assert res.status_code == 200
+        data = get_json(res)
+        expected = sorted([{'doc_count': 2, 'key': 4},
+                           {'doc_count': 1, 'key': 5}],
+                          key=lambda x: x['doc_count'])
+        assert sorted(data['aggregations']['test']['buckets'],
+                      key=lambda x: x['doc_count']) == expected

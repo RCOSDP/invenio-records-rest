@@ -1,26 +1,10 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2015, 2016 CERN.
+# Copyright (C) 2015-2018 CERN.
 #
-# Invenio is free software; you can redistribute it
-# and/or modify it under the terms of the GNU General Public License as
-# published by the Free Software Foundation; either version 2 of the
-# License, or (at your option) any later version.
-#
-# Invenio is distributed in the hope that it will be
-# useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Invenio; if not, write to the
-# Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
-# MA 02111-1307, USA.
-#
-# In applying this license, CERN does not
-# waive the privileges and immunities granted to it by virtue of its status
-# as an Intergovernmental Organization or submit itself to any jurisdiction.
+# Invenio is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
 
 """Pytest configuration."""
 
@@ -30,18 +14,21 @@ import copy
 import json
 import os
 import shutil
+import sys
 import tempfile
 from os.path import dirname, join
 
 import pytest
+from elasticsearch import VERSION as ES_VERSION
 from elasticsearch.exceptions import RequestError
 from flask import Flask, url_for
 from flask_login import LoginManager, UserMixin
 from helpers import create_record
-from invenio_db import db as db_
 from invenio_db import InvenioDB
+from invenio_db import db as db_
 from invenio_indexer import InvenioIndexer
 from invenio_indexer.api import RecordIndexer
+from invenio_indexer.signals import before_record_index
 from invenio_pidstore import InvenioPIDStore
 from invenio_records import InvenioRecords
 from invenio_rest import InvenioREST
@@ -52,6 +39,9 @@ from sqlalchemy_utils.functions import create_database, database_exists
 from invenio_records_rest import InvenioRecordsREST, config
 from invenio_records_rest.facets import terms_filter
 from invenio_records_rest.utils import PIDConverter
+from invenio_records_rest.views import create_blueprint_from_app
+
+sys.path.append(os.path.dirname(__file__))
 
 
 class TestSearch(RecordsSearch):
@@ -66,7 +56,7 @@ class TestSearch(RecordsSearch):
     def __init__(self, **kwargs):
         """Add extra options."""
         super(TestSearch, self).__init__(**kwargs)
-        self._extra.update(**{'_source': {'exclude': ['_access']}})
+        self._extra.update(**{'_source': {'excludes': ['_access']}})
 
 
 class IndexFlusher(object):
@@ -78,7 +68,7 @@ class IndexFlusher(object):
 
     def flush_and_wait(self):
         """Flush index and wait until operation is fully done."""
-        current_search.flush_and_refresh(search_class.Meta.index)
+        current_search.flush_and_refresh(self.search_class.Meta.index)
 
 
 @pytest.yield_fixture(scope='session')
@@ -132,6 +122,7 @@ def app(request, search_class):
     instance_path = tempfile.mkdtemp()
     app = Flask('testapp', instance_path=instance_path)
     app.config.update(
+        ACCOUNTS_JWT_ENABLE=False,
         INDEXER_DEFAULT_DOC_TYPE='testrecord',
         INDEXER_DEFAULT_INDEX=search_class.Meta.index,
         RECORDS_REST_ENDPOINTS=copy.deepcopy(config.RECORDS_REST_ENDPOINTS),
@@ -139,6 +130,7 @@ def app(request, search_class):
         RECORDS_REST_DEFAULT_DELETE_PERMISSION_FACTORY=None,
         RECORDS_REST_DEFAULT_READ_PERMISSION_FACTORY=None,
         RECORDS_REST_DEFAULT_UPDATE_PERMISSION_FACTORY=None,
+        RECORDS_REST_DEFAULT_RESULTS_SIZE=10,
         RECORDS_REST_DEFAULT_SEARCH_INDEX=search_class.Meta.index,
         RECORDS_REST_FACETS={
             search_class.Meta.index: {
@@ -187,10 +179,12 @@ def app(request, search_class):
     InvenioDB(app)
     InvenioREST(app)
     InvenioRecords(app)
+    InvenioIndexer(app)
     InvenioPIDStore(app)
     search = InvenioSearch(app)
-    search.register_mappings(search_class.Meta.index, 'mappings')
+    search.register_mappings(search_class.Meta.index, 'mock_module.mappings')
     InvenioRecordsREST(app)
+    app.register_blueprint(create_blueprint_from_app(app))
 
     with app.app_context():
         yield app
@@ -226,17 +220,54 @@ def es(app):
     list(current_search.delete(ignore=[404]))
 
 
+def record_indexer_receiver(sender, json=None, record=None, index=None,
+                            **kwargs):
+    """Mock-receiver of a before_record_index signal."""
+    if ES_VERSION[0] == 2:
+        suggest_byyear = {}
+        suggest_byyear['context'] = {
+            'year': json['year']
+        }
+        suggest_byyear['input'] = [json['title'], ]
+        suggest_byyear['output'] = json['title']
+        suggest_byyear['payload'] = copy.deepcopy(json)
+
+        suggest_title = {}
+        suggest_title['input'] = [json['title'], ]
+        suggest_title['output'] = json['title']
+        suggest_title['payload'] = copy.deepcopy(json)
+
+        json['suggest_byyear'] = suggest_byyear
+        json['suggest_title'] = suggest_title
+
+    elif ES_VERSION[0] >= 5:
+        suggest_byyear = {}
+        suggest_byyear['contexts'] = {
+            'year': [str(json['year'])]
+        }
+        suggest_byyear['input'] = [json['title'], ]
+
+        suggest_title = {}
+        suggest_title['input'] = [json['title'], ]
+        json['suggest_byyear'] = suggest_byyear
+        json['suggest_title'] = suggest_title
+
+    return json
+
+
 @pytest.yield_fixture()
 def indexer(app, es):
     """Create a record indexer."""
     InvenioIndexer(app)
+    before_record_index.connect(record_indexer_receiver, sender=app)
     yield RecordIndexer()
 
 
 @pytest.yield_fixture(scope='session')
 def test_data():
     """Load test records."""
-    with open(join(dirname(__file__), 'data/testrecords.json')) as fp:
+    path = 'data/testrecords.json'
+    with open(join(dirname(__file__), path)) as fp:
         records = json.load(fp)
     yield records
 

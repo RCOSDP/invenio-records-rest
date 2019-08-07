@@ -1,35 +1,23 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2015, 2016 CERN.
+# Copyright (C) 2015-2018 CERN.
 #
-# Invenio is free software; you can redistribute it
-# and/or modify it under the terms of the GNU General Public License as
-# published by the Free Software Foundation; either version 2 of the
-# License, or (at your option) any later version.
-#
-# Invenio is distributed in the hope that it will be
-# useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Invenio; if not, write to the
-# Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
-# MA 02111-1307, USA.
-#
-# In applying this license, CERN does not
-# waive the privileges and immunities granted to it by virtue of its status
-# as an Intergovernmental Organization or submit itself to any jurisdiction.
+# Invenio is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
 
-"""Links for record serialization."""
+"""Default link factories for PID serialization into URLs.
+
+Link factory can be specified as ``links_factory_impl`` in
+:data:`invenio_records_rest.config.RECORDS_REST_ENDPOINTS` configuration.
+"""
 
 from flask import request, url_for
 
 from .proxies import current_records_rest
 
 
-def default_links_factory(pid):
+def default_links_factory(pid, record=None, **kwargs):
     """Factory for record links generation.
 
     :param pid: A Persistent Identifier instance.
@@ -49,7 +37,7 @@ def default_links_factory_with_additional(additional_links):
            returned object.
     :returns: A link generation factory.
     """
-    def factory(pid):
+    def factory(pid, **kwargs):
         links = default_links_factory(pid)
         for link in additional_links:
             links[link] = additional_links[link].format(pid=pid,

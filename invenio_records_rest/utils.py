@@ -1,28 +1,12 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2016 CERN.
+# Copyright (C) 2016-2018 CERN.
 #
-# Invenio is free software; you can redistribute it
-# and/or modify it under the terms of the GNU General Public License as
-# published by the Free Software Foundation; either version 2 of the
-# License, or (at your option) any later version.
-#
-# Invenio is distributed in the hope that it will be
-# useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Invenio; if not, write to the
-# Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
-# MA 02111-1307, USA.
-#
-# In applying this license, CERN does not
-# waive the privileges and immunities granted to it by virtue of its status
-# as an Intergovernmental Organization or submit itself to any jurisdiction.
+# Invenio is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
 
-"""Implementention of various utility functions."""
+"""General utility functions module."""
 
 from functools import partial
 
@@ -129,43 +113,48 @@ def check_elasticsearch(record, *args, **kwargs):
 
 
 class LazyPIDValue(object):
-    """Lazy resolver for PID value."""
+    """Lazy PID resolver.
+
+    The PID will not be resolved until the `data` property is accessed.
+    """
 
     def __init__(self, resolver, value):
-        """Initialize with resolver and URL value.
+        """Initialize with resolver object and the PID value.
 
-        :params resolver: Used to resolve PID value and return a record.
+        :params resolver: Resolves for PID,
+                          see :class:`invenio_pidstore.resolver.Resolver`.
         :params value: PID value.
+        :type value: str
         """
         self.resolver = resolver
         self.value = value
 
     @cached_property
     def data(self):
-        """Resolve PID value and return tuple with PID and record.
+        """Resolve PID from a value and return a tuple with PID and the record.
 
         :returns: A tuple with the PID and the record resolved.
         """
         try:
             return self.resolver.resolve(self.value)
-        except PIDDoesNotExistError:
-            raise PIDDoesNotExistRESTError()
-        except PIDUnregistered:
-            raise PIDUnregisteredRESTError()
-        except PIDDeletedError:
-            raise PIDDeletedRESTError()
-        except PIDMissingObjectError as e:
+        except PIDDoesNotExistError as pid_error:
+            raise PIDDoesNotExistRESTError(pid_error=pid_error)
+        except PIDUnregistered as pid_error:
+            raise PIDUnregisteredRESTError(pid_error=pid_error)
+        except PIDDeletedError as pid_error:
+            raise PIDDeletedRESTError(pid_error=pid_error)
+        except PIDMissingObjectError as pid_error:
             current_app.logger.exception(
-                'No object assigned to {0}.'.format(e.pid),
-                extra={'pid': e.pid})
-            raise PIDMissingObjectRESTError(e.pid)
-        except PIDRedirectedError as e:
+                'No object assigned to {0}.'.format(pid_error.pid),
+                extra={'pid': pid_error.pid})
+            raise PIDMissingObjectRESTError(pid_error.pid, pid_error=pid_error)
+        except PIDRedirectedError as pid_error:
             try:
                 location = url_for(
                     '.{0}_item'.format(
                         current_records_rest.default_endpoint_prefixes[
-                            e.destination_pid.pid_type]),
-                    pid_value=e.destination_pid.pid_value)
+                            pid_error.destination_pid.pid_type]),
+                    pid_value=pid_error.destination_pid.pid_value)
                 data = dict(
                     status=301,
                     message='Moved Permanently',
@@ -178,19 +167,28 @@ class LazyPIDValue(object):
                 current_app.logger.exception(
                     'Invalid redirect - pid_type "{0}" '
                     'endpoint missing.'.format(
-                        e.destination_pid.pid_type),
+                        pid_error.destination_pid.pid_type),
                     extra={
-                        'pid': e.pid,
-                        'destination_pid': e.destination_pid,
+                        'pid': pid_error.pid,
+                        'destination_pid': pid_error.destination_pid,
                     })
-                raise PIDRedirectedRESTError(e.destination_pid.pid_type)
+                raise PIDRedirectedRESTError(
+                    pid_error.destination_pid.pid_type, pid_error=pid_error)
 
 
 class PIDConverter(BaseConverter):
-    """Resolve PID value."""
+    """Converter for PID values in the route mapping.
+
+    This class is a custom routing converter defining the 'PID' type.
+    See http://werkzeug.pocoo.org/docs/0.12/routing/#custom-converters.
+
+    Use ``pid`` as a type in the route pattern, e.g.: the use of
+    route decorator: ``@blueprint.route('/record/<pid(recid):pid_value>')``,
+    will match and resolve a path: ``/record/123456``.
+    """
 
     def __init__(self, url_map, pid_type, getter=None, record_class=None):
-        """Initialize PID resolver."""
+        """Initialize the converter."""
         super(PIDConverter, self).__init__(url_map)
         getter = obj_or_import_string(getter, default=partial(
             obj_or_import_string(record_class, default=Record).get_record,
@@ -205,4 +203,12 @@ class PIDConverter(BaseConverter):
 
 
 class PIDPathConverter(PIDConverter, PathConverter):
-    """Resolve PID path value."""
+    """PIDConverter with support for path-like (with slashes) PID values.
+
+    This class is a custom routing converter defining the 'PID' type.
+    See http://werkzeug.pocoo.org/docs/0.12/routing/#custom-converters.
+
+    Use ``pidpath`` as a type in the route patter, e.g.: the use of a route
+    decorator: ``@blueprint.route('/record/<pidpath(recid):pid_value>')``,
+    will match and resolve a path containing a DOI: ``/record/10.1010/12345``.
+    """

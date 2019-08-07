@@ -1,59 +1,33 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2017 CERN.
+# Copyright (C) 2017-2018 CERN.
+# Copyright (C) 2017 RERO.
 #
-# Invenio is free software; you can redistribute it
-# and/or modify it under the terms of the GNU General Public License as
-# published by the Free Software Foundation; either version 2 of the
-# License, or (at your option) any later version.
-#
-# Invenio is distributed in the hope that it will be
-# useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Invenio; if not, write to the
-# Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
-# MA 02111-1307, USA.
-#
-# In applying this license, CERN does not
-# waive the privileges and immunities granted to it by virtue of its status
-# as an Intergovernmental Organization or submit itself to any jurisdiction.
+# Invenio is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
 
-"""Marshmallow based JSON serializer for records."""
+"""Marshmallow based JSON-LD serializer for records."""
 
 from __future__ import absolute_import, print_function
 
 import copy
 
 from flask import request
-from marshmallow import Schema, fields
-from marshmallow.decorators import post_dump
 from pyld import jsonld
 
+from .base import TransformerMixinInterface
 from .json import JSONSerializer
 
 
-class RecordMetadataOnlySchema(Schema):
-    """Schema which extracts the metadata only."""
-
-    @post_dump
-    def post_dump(self, obj):
-        """Get metadata only from the record."""
-        return obj.get('metadata', {})
-
-
-class JSONLDSerializer(JSONSerializer):
+class JSONLDTransformerMixin(TransformerMixinInterface):
     """JSON-LD serializer for records.
 
     Note: This serializer is not suitable for serializing large number of
     records.
     """
 
-    def __init__(self, context, schema_class=RecordMetadataOnlySchema,
-                 expanded=True, replace_refs=False):
+    def __init__(self, context, expanded=True, **kwargs):
         """Initialize record.
 
         :param context: JSON-LD context.
@@ -63,9 +37,7 @@ class JSONLDSerializer(JSONSerializer):
         """
         self.context = context
         self._expanded = expanded
-        super(JSONLDSerializer, self).__init__(
-            schema_class=schema_class, replace_refs=replace_refs
-        )
+        super(JSONLDTransformerMixin, self).__init__(**kwargs)
 
     @property
     def expanded(self):
@@ -78,12 +50,31 @@ class JSONLDSerializer(JSONSerializer):
                 return False
         return self._expanded
 
-    def dump(self, obj):
+    def transform_jsonld(self, obj):
         """Compact JSON according to context."""
-        rec = copy.deepcopy(super(JSONLDSerializer, self).dump(obj))
+        rec = copy.deepcopy(obj)
         rec.update(self.context)
         compacted = jsonld.compact(rec, self.context)
         if not self.expanded:
             return compacted
         else:
             return jsonld.expand(compacted)[0]
+
+    def transform_record(self, pid, record, links_factory=None, **kwargs):
+        """Transform record into an intermediate representation."""
+        result = super(JSONLDTransformerMixin, self).transform_record(
+            pid, record, links_factory, **kwargs
+        )
+        return self.transform_jsonld(result)
+
+    def transform_search_hit(self, pid, record_hit, links_factory=None,
+                             **kwargs):
+        """Transform search result hit into an intermediate representation."""
+        result = super(JSONLDTransformerMixin, self).transform_search_hit(
+            pid, record_hit, links_factory, **kwargs
+        )
+        return self.transform_jsonld(result)
+
+
+class JSONLDSerializer(JSONLDTransformerMixin, JSONSerializer):
+    """JSON-LD serializer for records supporting Marshmallow schemas."""

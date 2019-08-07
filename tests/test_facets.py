@@ -1,26 +1,10 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2015, 2016 CERN.
+# Copyright (C) 2015-2018 CERN.
 #
-# Invenio is free software; you can redistribute it
-# and/or modify it under the terms of the GNU General Public License as
-# published by the Free Software Foundation; either version 2 of the
-# License, or (at your option) any later version.
-#
-# Invenio is distributed in the hope that it will be
-# useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Invenio; if not, write to the
-# Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
-# MA 02111-1307, USA.
-#
-# In applying this license, CERN does not
-# waive the privileges and immunities granted to it by virtue of its status
-# as an Intergovernmental Organization or submit itself to any jurisdiction.
+# Invenio is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
 
 
 """Facets tests."""
@@ -69,14 +53,15 @@ def test_create_filter_dsl():
         subtype=terms_filter('type.subtype'),
     )
 
-    with app.test_request_context('?type=a&type=b&subtype=c'):
+    with app.test_request_context(u'?type=a&type=b&subtype=c&type=zażółcić'):
         filters, args = _create_filter_dsl(kwargs, defs)
         assert len(filters) == 2
         assert args == MultiDict([
-            ('a', '1'),
-            ('type', 'a'),
-            ('type', 'b'),
-            ('subtype', 'c')
+            ('a', u'1'),
+            ('type', u'a'),
+            ('type', u'b'),
+            ('subtype', u'c'),
+            ('type', u'zażółcić')
         ])
 
     kwargs = MultiDict([('a', '1')])

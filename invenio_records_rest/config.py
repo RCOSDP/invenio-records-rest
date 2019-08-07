@@ -1,40 +1,27 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2016 CERN.
+# Copyright (C) 2016-2018 CERN.
 #
-# Invenio is free software; you can redistribute it
-# and/or modify it under the terms of the GNU General Public License as
-# published by the Free Software Foundation; either version 2 of the
-# License, or (at your option) any later version.
-#
-# Invenio is distributed in the hope that it will be
-# useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Invenio; if not, write to the
-# Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
-# MA 02111-1307, USA.
-#
-# In applying this license, CERN does not
-# waive the privileges and immunities granted to it by virtue of its status
-# as an Intergovernmental Organization or submit itself to any jurisdiction.
+# Invenio is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
 
 """Invenio-Records-REST configuration."""
 
 from __future__ import absolute_import, print_function
 
 from flask import request
+from invenio_indexer.api import RecordIndexer
 from invenio_search import RecordsSearch
 
 from .facets import terms_filter
-from .utils import check_elasticsearch, deny_all
+from .utils import allow_all, check_elasticsearch, deny_all
 
 
 def _(x):
+    """Identity function for string extraction."""
     return x
+
 
 RECORDS_REST_ENDPOINTS = dict(
     recid=dict(
@@ -42,6 +29,7 @@ RECORDS_REST_ENDPOINTS = dict(
         pid_minter='recid',
         pid_fetcher='recid',
         search_class=RecordsSearch,
+        indexer_class=RecordIndexer,
         search_index=None,
         search_type=None,
         record_serializers={
@@ -56,6 +44,7 @@ RECORDS_REST_ENDPOINTS = dict(
         item_route='/records/<pid(recid):pid_value>',
         default_media_type='application/json',
         max_result_window=10000,
+        error_handlers=dict(),
     ),
 )
 """Default REST endpoints loaded.
@@ -71,6 +60,7 @@ The structure of the dictionary is as follows:
     from flask import abort
     from flask_security import current_user
     from invenio_records_rest.query import es_search_factory
+    from invenio_records_rest.errors import PIDDeletedRESTError
 
 
     def search_factory(*args, **kwargs):
@@ -86,6 +76,12 @@ The structure of the dictionary is as follows:
                     return True
             return type('Check', (), {'can': can})()
 
+    def deleted_pid_error_handler(error):
+        record = error.pid_error.record or {}
+        return make_response(jsonify({
+            'status': 410,
+            'message': error.description,
+            'removal_reason': record.get('removal_reason')}), 410)
 
     RECORDS_REST_ENDPOINTS = {
         'endpoint-prefix': {
@@ -93,7 +89,8 @@ The structure of the dictionary is as follows:
             'default_endpoint_prefix': True,
             'default_media_type': 'application/json',
             'delete_permission_factory_imp': permission_check_factory(),
-            'item_route': ''/recods/<pid(record-pid-type):pid_value>'',
+            'item_route': ('/records/<pid(record-pid-type, '
+                           'record_class="mypackage.api:MyRecord"):pid_value>'),
             'links_factory_imp': ('invenio_records_rest.links:'
                                   'default_links_factory'),
             'list_route': '/records/',
@@ -101,6 +98,7 @@ The structure of the dictionary is as follows:
             'pid_fetcher': '<registered-pid-fetcher>',
             'pid_minter': '<registered-minter-name>',
             'pid_type': '<record-pid-type>',
+            'list_permission_factory_imp': permission_check_factory(),
             'read_permission_factory_imp': permission_check_factory(),
             'record_class': 'mypackage.api:MyRecord',
             'record_loaders': {
@@ -118,6 +116,7 @@ The structure of the dictionary is as follows:
             'search_type': 'elasticsearch-doc-type',
             'suggesters': {
                 'my_url_param_to_complete': {
+                    '_source': ['specified_source_filtered_field'],
                     'completion': {
                         'field': 'suggest_byyear_elasticsearch_field',
                         'size': 10,
@@ -127,6 +126,9 @@ The structure of the dictionary is as follows:
             },
             'update_permission_factory_imp': permission_check_factory(),
             'use_options_view': True,
+            'error_handlers': {
+                PIDDeletedRESTError: deleted_pid_error_handler,
+            },
         },
     }
 
@@ -160,6 +162,9 @@ The structure of the dictionary is as follows:
 
 :param pid_minter: It identifies the registered minter name. Required.
 
+:param list_permission_factory_imp: Import path to factory that creates a
+    list permission object for a given index / list.
+
 :param read_permission_factory_imp: Import path to factory that creates a
     read permission object for a given record.
 
@@ -190,9 +195,11 @@ The structure of the dictionary is as follows:
 :param search_type: Name of the search type used when searching records.
 
 :param suggesters: Suggester fields configuration. Any element of the
-    dictionary represents a suggestion field. The key of the dictionary element
-    is used to identify the url query parameter. The ``field`` parameter
-    identifies the suggester field name in your elasticsearch schema.
+    dictionary represents a suggestion field. For each suggestion field we can
+    optionally specify the source filtering (appropriate for ES5) by using
+    ``_source``. The key of the dictionary element is used to identify the url
+    query parameter. The ``field`` parameter identifies the suggester field
+    name in your elasticsearch schema.
     To have more information about suggestion configuration, you can read
     suggesters section on ElasticSearch documentation.
 
@@ -203,6 +210,13 @@ The structure of the dictionary is as follows:
 
 :param use_options_view: Determines if a special option view should be
     installed.
+
+:param error_handlers: Error handlers configuration for the endpoint. The
+    dictionary has an exception type or HTTP status code as a key and a
+    function or an import path to a function as a value. The function will be
+    passed as an argument to :meth:`flask.Blueprint.register_error_handler`, so
+    it should take the handled exception/code as its single argument.
+
 """
 
 RECORDS_REST_DEFAULT_LOADERS = {
@@ -219,7 +233,7 @@ This option can be overritten in each REST endpoint as follows:
         'recid': {
             ...
             'record_loaders': {
-                'aplication/json': 'mypackage.utils:myloader',
+                'application/json': 'mypackage.utils:myloader',
             },
             ...
         }
@@ -327,6 +341,9 @@ The structure of the dictionary is as follows:
 RECORDS_REST_DEFAULT_CREATE_PERMISSION_FACTORY = deny_all
 """Default create permission factory: reject any request."""
 
+RECORDS_REST_DEFAULT_LIST_PERMISSION_FACTORY = allow_all
+"""Default list permission factory: allow all requests"""
+
 RECORDS_REST_DEFAULT_READ_PERMISSION_FACTORY = check_elasticsearch
 """Default read permission factory: check if the record exists."""
 
@@ -341,5 +358,12 @@ RECORDS_REST_ELASTICSEARCH_ERROR_HANDLERS = {
         'invenio_records_rest.views'
         ':elasticsearch_query_parsing_exception_handler'
     ),
+    'query_shard_exception': (
+        'invenio_records_rest.views'
+        ':elasticsearch_query_parsing_exception_handler'
+    ),
 }
 """Handlers for ElasticSearch error codes."""
+
+RECORDS_REST_DEFAULT_RESULTS_SIZE = 10
+"""Default search results size."""

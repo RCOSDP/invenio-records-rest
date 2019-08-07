@@ -1,28 +1,16 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2016 CERN.
+# Copyright (C) 2016-2018 CERN.
 #
-# Invenio is free software; you can redistribute it
-# and/or modify it under the terms of the GNU General Public License as
-# published by the Free Software Foundation; either version 2 of the
-# License, or (at your option) any later version.
-#
-# Invenio is distributed in the hope that it will be
-# useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Invenio; if not, write to the
-# Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston,
-# MA 02111-1307, USA.
-#
-# In applying this license, CERN does not
-# waive the privileges and immunities granted to it by virtue of its status
-# as an Intergovernmental Organization or submit itself to any jurisdiction.
+# Invenio is free software; you can redistribute it and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
 
-"""Facets factory for REST API."""
+"""Facets and factories for result filtering and aggregation.
+
+See :data:`invenio_records_rest.config.RECORDS_REST_FACETS` for more
+information on how to specify aggregations and filters.
+"""
 
 from __future__ import absolute_import, print_function
 
@@ -30,6 +18,7 @@ from elasticsearch_dsl import Q
 from elasticsearch_dsl.query import Range
 from flask import current_app, request
 from invenio_rest.errors import FieldError, RESTValidationError
+from six import text_type
 from werkzeug.datastructures import MultiDict
 
 
@@ -94,7 +83,7 @@ def _create_filter_dsl(urlkwargs, definitions):
     """Create a filter DSL expression."""
     filters = []
     for name, filter_factory in definitions.items():
-        values = request.values.getlist(name, type=str)
+        values = request.values.getlist(name, type=text_type)
         if values:
             filters.append(filter_factory(values))
             for v in values:
@@ -127,7 +116,7 @@ def _aggregations(search, definitions):
     """Add aggregations to query."""
     if definitions:
         for name, agg in definitions.items():
-            search.aggs[name] = agg
+            search.aggs[name] = agg if not callable(agg) else agg()
     return search
 
 
