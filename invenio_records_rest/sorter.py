@@ -94,6 +94,7 @@ def eval_field(field, asc):
             field = copy.deepcopy(field)
             key = list(field.keys())[0]
             field[key]['order'] = reverse_order(field[key]['order'])
+            field[key]['unmapped_type'] = 'long'
             return field
     elif callable(field):
         return field(asc)
@@ -101,7 +102,8 @@ def eval_field(field, asc):
         key, key_asc = parse_sort_field(field)
         if not asc:
             key_asc = not key_asc
-        return {key: {'order': 'asc' if key_asc else 'desc'}}
+        return {key: {'order': 'asc' if key_asc else 'desc',
+                      'unmapped_type': 'long'}}
 
 
 def default_sorter_factory(search, index):
