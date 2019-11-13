@@ -533,7 +533,7 @@ class RecordsListResource(ContentNegotiatedMethodView):
         search = search[(page - 1) * size:page * size]
 
         search, qs_kwargs = self.search_factory(search)
-        query = request._values.get('q')
+        query = request.values.get('q')
         if query:
             urlkwargs['q'] = query
 
