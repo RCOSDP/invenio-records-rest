@@ -25,6 +25,8 @@ import copy
 import six
 from flask import current_app, request
 
+from .config import RECORDS_REST_DEFAULT_SORT
+
 
 def geolocation_sort(field_name, argument, unit, mode=None,
                      distance_type=None):
@@ -79,11 +81,12 @@ def reverse_order(order_value):
     return None
 
 
-def eval_field(field, asc):
+def eval_field(field, asc, nested_sorting=None):
     """Evaluate a field for sorting purpose.
 
     :param field: Field definition (string, dict or callable).
     :param asc: ``True`` if order is ascending, ``False`` if descending.
+    :param nested_sorting: nested_sorting definition (dict or None).
     :returns: Dictionary with the sort field query.
     """
     if isinstance(field, dict):
@@ -101,7 +104,11 @@ def eval_field(field, asc):
         key, key_asc = parse_sort_field(field)
         if not asc:
             key_asc = not key_asc
-        return {key: {'order': 'asc' if key_asc else 'desc'}}
+        sorting = {key: {'order': 'asc' if key_asc else 'desc',
+                         'unmapped_type': 'long'}}
+        if nested_sorting:
+            sorting[key].update({'nested': nested_sorting})
+        return sorting
 
 
 def default_sorter_factory(search, index):
@@ -118,9 +125,12 @@ def default_sorter_factory(search, index):
     if not urlfield:
         # cast to six.text_type to handle unicodes in Python 2
         has_query = request.values.get('q', type=six.text_type)
-        urlfield = current_app.config['RECORDS_REST_DEFAULT_SORT'].get(
-            index, {}).get('query' if has_query else 'noquery', '')
-
+        if current_app.config.get('RECORDS_REST_DEFAULT_SORT'):
+            urlfield = current_app.config['RECORDS_REST_DEFAULT_SORT'].get(
+                index, {}).get('query' if has_query else 'noquery', '')
+        else:
+            urlfield = RECORDS_REST_DEFAULT_SORT.get(
+                index, {}).get('query' if has_query else 'noquery', '')
     # Parse sort argument
     key, asc = parse_sort_field(urlfield)
 
@@ -132,6 +142,7 @@ def default_sorter_factory(search, index):
 
     # Get fields to sort query by
     search = search.sort(
-        *[eval_field(f, asc) for f in sort_options['fields']]
+        *[eval_field(f, asc, sort_options.get('nested'))
+          for f in sort_options['fields']]
     )
     return (search, {sort_arg_name: urlfield})

@@ -26,10 +26,10 @@ class SanitizedUnicode(TrimmedString):
     def is_valid_xml_char(self, char):
         """Check if a character is valid based on the XML specification."""
         codepoint = ord(char)
-        return (0x20 <= codepoint <= 0xD7FF or
-                codepoint in (0x9, 0xA, 0xD) or
-                0xE000 <= codepoint <= 0xFFFD or
-                0x10000 <= codepoint <= 0x10FFFF)
+        return (0x20 <= codepoint <= 0xD7FF
+                or codepoint in (0x9, 0xA, 0xD)
+                or 0xE000 <= codepoint <= 0xFFFD
+                or 0x10000 <= codepoint <= 0x10FFFF)
 
     def _deserialize(self, value, attr, data):
         """Deserialize sanitized string value."""

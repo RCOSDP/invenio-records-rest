@@ -352,9 +352,9 @@ def create_url_rules(endpoint, list_route=None, item_route=None,
             item_media_types=record_serializers.keys(),
         )
         return [
-                   dict(rule="{0}_options".format(list_route),
-                        view_func=options_view)
-               ] + views
+            dict(rule="{0}_options".format(list_route),
+                 view_func=options_view)
+        ] + views
     return views
 
 
@@ -405,8 +405,8 @@ def need_record_permission(factory_name):
         def need_record_permission_decorator(self, record=None, *args,
                                              **kwargs):
             permission_factory = (
-                getattr(self, factory_name) or
-                getattr(current_records_rest, factory_name)
+                getattr(self, factory_name)
+                or getattr(current_records_rest, factory_name)
             )
 
             # FIXME use context instead
@@ -514,8 +514,15 @@ class RecordsListResource(ContentNegotiatedMethodView):
         """
         default_results_size = current_app.config.get(
             'RECORDS_REST_DEFAULT_RESULTS_SIZE', 10)
-        page = request.values.get('page', 1, type=int)
-        size = request.values.get('size', default_results_size, type=int)
+        # page_no is parameters for Opensearch
+        page = request.values.get('page',
+                                  request.values.get('page_no', 1, type=int),
+                                  type=int)
+        # list_view_num is parameters for Opensearch
+        size = request.values.get('size',
+                                  request.values.get(
+                                      'list_view_num', 10, type=int),
+                                  type=int)
         if page * size >= self.max_result_window:
             raise MaxResultWindowRESTError()
 
@@ -526,7 +533,9 @@ class RecordsListResource(ContentNegotiatedMethodView):
         search = search[(page - 1) * size:page * size]
 
         search, qs_kwargs = self.search_factory(search)
-        urlkwargs.update(qs_kwargs)
+        query = request.values.get('q')
+        if query:
+            urlkwargs['q'] = query
 
         # Execute search
         search_result = search.execute()
