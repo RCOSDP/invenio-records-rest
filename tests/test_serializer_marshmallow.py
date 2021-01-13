@@ -12,7 +12,8 @@ from __future__ import absolute_import, print_function
 
 from invenio_pidstore.models import PersistentIdentifier
 from invenio_records import Record
-from marshmallow import Schema, fields
+from invenio_rest.serializer import BaseSchema as Schema
+from marshmallow import fields
 
 from invenio_records_rest.serializers.base import PreprocessorMixin
 from invenio_records_rest.serializers.marshmallow import MarshmallowMixin
@@ -57,7 +58,7 @@ def test_transform_record_default_schema():
         Record({'title': 'test'})
     )
     assert data == {
-        'id': 1,
+        'id': '1',
         'created': None,
         'links': {},
         'metadata': {'title': 'test'},

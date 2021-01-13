@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2016-2018 CERN.
+# Copyright (C) 2016-2019 CERN.
 #
 # Invenio is free software; you can redistribute it and/or modify it
 # under the terms of the MIT License; see LICENSE file for more details.
@@ -21,6 +21,7 @@ from .utils import allow_all, check_elasticsearch, deny_all
 def _(x):
     """Identity function for string extraction."""
     return x
+
 
 RECORDS_REST_ENDPOINTS = dict(
     recid=dict(
@@ -88,7 +89,8 @@ The structure of the dictionary is as follows:
             'default_endpoint_prefix': True,
             'default_media_type': 'application/json',
             'delete_permission_factory_imp': permission_check_factory(),
-            'item_route': ''/recods/<pid(record-pid-type):pid_value>'',
+            'item_route': ('/records/<pid(record-pid-type, '
+                           'record_class="mypackage.api:MyRecord"):pid_value>'),
             'links_factory_imp': ('invenio_records_rest.links:'
                                   'default_links_factory'),
             'list_route': '/records/',
@@ -105,15 +107,22 @@ The structure of the dictionary is as follows:
             'record_serializers': {
                 'application/json': 'mypackage.utils:my_json_serializer'
             },
+            'record_serializers_aliases': {
+                'json': 'application/json'
+            },
             'search_class': 'mypackage.utils:mysearchclass',
             'search_factory_imp': search_factory(),
             'search_index': 'elasticsearch-index-name',
             'search_serializers': {
                 'application/json': 'mypackage.utils:my_json_search_serializer'
             },
+            'search_serializers_aliases': {
+                'json': 'application/json'
+            },
             'search_type': 'elasticsearch-doc-type',
             'suggesters': {
                 'my_url_param_to_complete': {
+                    '_source': ['specified_source_filtered_field'],
                     'completion': {
                         'field': 'suggest_byyear_elasticsearch_field',
                         'size': 10,
@@ -168,10 +177,14 @@ The structure of the dictionary is as follows:
 :param record_class: A record API class or importable string.
 
 :param record_loaders: It contains the list of record deserializers for
-    supperted formats.
+    supported formats.
 
 :param record_serializers: It contains the list of record serializers for
     supported formats.
+
+:param record_serializers_aliases: A mapping of values of the defined query arg
+    (see `config.REST_MIMETYPE_QUERY_ARG_NAME`) to valid mimetypes for record
+    item serializers: dict(alias -> mimetype).
 
 :param search_class: Import path or class object for the object in charge of
     execute the search queries. The default search class is
@@ -180,7 +193,7 @@ The structure of the dictionary is as follows:
     <http://elasticsearch-dsl.readthedocs.io/en/latest/search_dsl.html>` of the
     ElasticSearch DSL library.
 
-:param search_factory_imp: Factory to parse quieries.
+:param search_factory_imp: Factory to parse queries.
 
 :param search_index: Name of the search index used when searching records.
 
@@ -189,16 +202,22 @@ The structure of the dictionary is as follows:
     this case it handle a list of records resulted by a search query instead of
     a single record.
 
+:param search_serializers_aliases: A mapping of values of the defined query arg
+    (see `config.REST_MIMETYPE_QUERY_ARG_NAME`) to valid mimetypes for records
+    search serializers: dict(alias -> mimetype).
+
 :param search_type: Name of the search type used when searching records.
 
 :param suggesters: Suggester fields configuration. Any element of the
-    dictionary represents a suggestion field. The key of the dictionary element
-    is used to identify the url query parameter. The ``field`` parameter
-    identifies the suggester field name in your elasticsearch schema.
+    dictionary represents a suggestion field. For each suggestion field we can
+    optionally specify the source filtering (appropriate for ES5) by using
+    ``_source``. The key of the dictionary element is used to identify the url
+    query parameter. The ``field`` parameter identifies the suggester field
+    name in your elasticsearch schema.
     To have more information about suggestion configuration, you can read
     suggesters section on ElasticSearch documentation.
 
-    .. note:: Only completion suggessters are supported.
+    .. note:: Only completion suggesters are supported.
 
 :param update_permission_factory_imp: Import path to factory that creates a
     update permission object for a given record.
@@ -272,7 +291,7 @@ Each search field can be either:
 
 - A string of the form ``'<field name>'`` (ascending) or ``'-<field name>'``
   (descending).
-- A dictionary with Elasicsearch sorting syntax (e.g.
+- A dictionary with Elasticsearch sorting syntax (e.g.
   ``{'price' : {'order' : 'asc', 'mode' : 'avg'}}``).
 - A callable taking one boolean parameter (``True`` for ascending and ``False``
   for descending) and returning a dictionary like above. This is useful if you
@@ -359,3 +378,6 @@ RECORDS_REST_ELASTICSEARCH_ERROR_HANDLERS = {
     ),
 }
 """Handlers for ElasticSearch error codes."""
+
+RECORDS_REST_DEFAULT_RESULTS_SIZE = 10
+"""Default search results size."""

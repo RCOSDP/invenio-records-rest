@@ -112,6 +112,21 @@ def check_elasticsearch(record, *args, **kwargs):
     return type('CheckES', (), {'can': can})()
 
 
+def make_comma_list_a_list(elements_to_rocess):
+    """Process a list with commas to simple list.
+
+    For example:
+    ['elem1','elem2,elem3'] => ['elem1', 'elem2', 'elem3']
+
+    :param elements_to_rocess: list to process
+    :return: processed list with elemnts separated
+    """
+    output_list = []
+    for element in elements_to_rocess:
+        output_list.extend(element.split(','))
+    return list(set(output_list))
+
+
 class LazyPIDValue(object):
     """Lazy PID resolver.
 
@@ -187,15 +202,27 @@ class PIDConverter(BaseConverter):
     will match and resolve a path: ``/record/123456``.
     """
 
-    def __init__(self, url_map, pid_type, getter=None, record_class=None):
+    def __init__(self, url_map, pid_type, getter=None, record_class=None,
+                 object_type='rec'):
         """Initialize the converter."""
         super(PIDConverter, self).__init__(url_map)
-        getter = obj_or_import_string(getter, default=partial(
-            obj_or_import_string(record_class, default=Record).get_record,
-            with_deleted=True
-        ))
-        self.resolver = Resolver(pid_type=pid_type, object_type='rec',
-                                 getter=getter)
+        self.pid_type = pid_type
+        self.getter = getter
+        self.record_class = record_class
+        self.object_type = object_type
+
+    @cached_property
+    def resolver(self):
+        """PID resolver."""
+        record_cls = obj_or_import_string(self.record_class, default=Record)
+        getter = obj_or_import_string(
+            self.getter,
+            default=partial(record_cls.get_record, with_deleted=True))
+        return Resolver(
+            pid_type=self.pid_type,
+            object_type=self.object_type,
+            getter=getter
+        )
 
     def to_python(self, value):
         """Resolve PID value."""

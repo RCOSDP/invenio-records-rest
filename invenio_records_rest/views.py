@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of Invenio.
-# Copyright (C) 2015-2018 CERN.
+# Copyright (C) 2015-2019 CERN.
 #
 # Invenio is free software; you can redistribute it and/or modify it
 # under the terms of the MIT License; see LICENSE file for more details.
@@ -25,7 +25,6 @@ from invenio_db import db
 from invenio_indexer.api import RecordIndexer
 from invenio_pidstore import current_pidstore
 from invenio_pidstore.models import PersistentIdentifier
-from invenio_pidstore.resolver import Resolver
 from invenio_records.api import Record
 from invenio_rest import ContentNegotiatedMethodView
 from invenio_rest.decorators import require_content_types
@@ -33,17 +32,23 @@ from invenio_search import RecordsSearch
 from jsonpatch import JsonPatchException, JsonPointerException
 from jsonschema.exceptions import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
+from webargs import ValidationError as WebargsValidationError
+from webargs import fields, validate
+from webargs.flaskparser import parser
+from werkzeug.exceptions import BadRequest
 
 from ._compat import wrap_links_factory
 from .errors import InvalidDataRESTError, InvalidQueryRESTError, \
-    JSONSchemaValidationError, MaxResultWindowRESTError, \
-    PatchJSONFailureRESTError, PIDResolveRESTError, \
+    JSONSchemaValidationError, PatchJSONFailureRESTError, \
+    PIDResolveRESTError, SearchPaginationRESTError, \
     SuggestMissingContextRESTError, SuggestNoCompletionsRESTError, \
-    UnsupportedMediaRESTError
+    UnhandledElasticsearchError, UnsupportedMediaRESTError
 from .links import default_links_factory
 from .proxies import current_records_rest
 from .query import es_search_factory
 from .utils import obj_or_import_string
+
+lt_es7 = ES_VERSION[0] < 7
 
 
 def elasticsearch_query_parsing_exception_handler(error):
@@ -95,7 +100,11 @@ def create_error_handlers(blueprint, error_handlers_registry=None):
         for cause_type, handler in handlers.items():
             if cause_type in cause_types:
                 return handler(error)
-        return error
+
+        # Default exception for unhandled errors
+        exception = UnhandledElasticsearchError()
+        current_app.logger.exception(error)  # Log the original stacktrace
+        return exception.get_response()
 
     for exc_or_code, handlers in error_handlers_registry.items():
         # Build full endpoint names and resolve handlers
@@ -168,6 +177,7 @@ def create_url_rules(endpoint, list_route=None, item_route=None,
                      search_class=None,
                      indexer_class=RecordIndexer,
                      search_serializers=None,
+                     search_serializers_aliases=None,
                      search_index=None, search_type=None,
                      default_media_type=None,
                      max_result_window=None, use_options_view=True,
@@ -193,12 +203,14 @@ def create_url_rules(endpoint, list_route=None, item_route=None,
     :param list_permission_factory_imp: Import path to factory that
         creates a list permission object for a given index/list.
     :param default_endpoint_prefix: ignored.
-    :param record_class: A record API class or importable string.
+    :param record_class: A record API class or importable string used when
+        creating new records.
     :param record_serializers: Serializers used for records.
-    :param record_serializers_aliases: A mapping of query arg `format` values
-        to valid mimetypes: dict(alias -> mimetype).
+    :param record_serializers_aliases: A mapping of values of the defined
+        query arg (see `config.REST_MIMETYPE_QUERY_ARG_NAME`) to valid
+        mimetypes for record item serializers: dict(alias -> mimetype).
     :param record_loaders: It contains the list of record deserializers for
-        supperted formats.
+        supported formats.
     :param search_class: Import path or class object for the object in charge
         of execute the search queries. The default search class is
         :class:`invenio_search.api.RecordsSearch`.
@@ -208,6 +220,9 @@ def create_url_rules(endpoint, list_route=None, item_route=None,
         of indexing records. The default indexer is
         :class:`invenio_indexer.api.RecordIndexer`.
     :param search_serializers: Serializers used for search results.
+    :param search_serializers_aliases: A mapping of values of the defined
+        query arg (see `config.REST_MIMETYPE_QUERY_ARG_NAME`) to valid
+        mimetypes for records search serializers: dict(alias -> mimetype).
     :param search_index: Name of the search index used when searching records.
     :param search_type: Name of the search type used when searching records.
     :param default_media_type: Default media type for both records and search.
@@ -217,7 +232,7 @@ def create_url_rules(endpoint, list_route=None, item_route=None,
         for the index.
     :param use_options_view: Determines if a special option view should be
         installed.
-    :param search_factory_imp: Factory to parse quieries.
+    :param search_factory_imp: Factory to parse queries.
     :param links_factory_imp: Factory for record links generation.
     :param suggesters: Suggester fields configuration.
 
@@ -288,13 +303,8 @@ def create_url_rules(endpoint, list_route=None, item_route=None,
     search_serializers = {mime: obj_or_import_string(func)
                           for mime, func in search_serializers.items()}
 
-    resolver = Resolver(pid_type=pid_type, object_type='rec',
-                        getter=partial(record_class.get_record,
-                                       with_deleted=True))
-
     list_view = RecordsListResource.as_view(
         RecordsListResource.view_name.format(endpoint),
-        resolver=resolver,
         minter_name=pid_minter,
         pid_type=pid_type,
         pid_fetcher=pid_fetcher,
@@ -304,6 +314,7 @@ def create_url_rules(endpoint, list_route=None, item_route=None,
         record_serializers=record_serializers,
         record_loaders=record_loaders,
         search_serializers=search_serializers,
+        serializers_query_aliases=search_serializers_aliases,
         search_class=search_class,
         indexer_class=indexer_class,
         default_media_type=default_media_type,
@@ -316,7 +327,6 @@ def create_url_rules(endpoint, list_route=None, item_route=None,
     )
     item_view = RecordResource.as_view(
         RecordResource.view_name.format(endpoint),
-        resolver=resolver,
         read_permission_factory=read_permission_factory,
         update_permission_factory=update_permission_factory,
         delete_permission_factory=delete_permission_factory,
@@ -373,8 +383,7 @@ def pass_record(f):
             pid, record = request.view_args['pid_value'].data
             return f(self, pid=pid, record=record, *args, **kwargs)
         except SQLAlchemyError:
-            raise PIDResolveRESTError(pid)
-
+            raise PIDResolveRESTError(pid_value)
     return inner
 
 
@@ -421,6 +430,88 @@ def need_record_permission(factory_name):
     return need_record_permission_builder
 
 
+def _validate_pagination_args(args):
+    if args.get('page') and args.get('from'):
+        raise WebargsValidationError(
+            'The query parameters from and page must not be '
+            'used at the same time.',
+            field_names=['page', 'from']
+        )
+
+
+def use_paginate_args(default_size=25, max_results=10000):
+    """Get and validate pagination arguments."""
+    def decorator(f):
+        @wraps(f)
+        def inner(self, *args, **kwargs):
+
+            _default_size = default_size(self) \
+                if callable(default_size) else default_size
+            _max_results = max_results(self) \
+                if callable(max_results) else max_results
+
+            try:
+                req = parser.parse(
+                    {
+                        'page': fields.Int(
+                            validate=validate.Range(min=1),
+                        ),
+                        'from': fields.Int(
+                            load_from='from',
+                            validate=validate.Range(min=1),
+                        ),
+                        'size': fields.Int(
+                            validate=validate.Range(min=1),
+                            missing=_default_size
+                        ),
+                    },
+                    locations=['querystring'],
+                    validate=_validate_pagination_args,
+                    error_status_code=400,
+                )
+            # For validation errors, webargs raises an enhanced BadRequest
+            except BadRequest as err:
+                raise SearchPaginationRESTError(
+                    description='Invalid pagination parameters.',
+                    errors=err.data.get('messages'))
+
+            # Default if neither page nor from is specified
+            if not (req.get('page') or req.get('from')):
+                req['page'] = 1
+
+            if req.get('page'):
+                req.update(dict(
+                    from_idx=(req['page'] - 1) * req['size'],
+                    to_idx=req['page'] * req['size'],
+                    links=dict(
+                        prev={'page': req['page'] - 1},
+                        self={'page': req['page']},
+                        next={'page': req['page'] + 1},
+                    )
+                ))
+            elif req.get('from'):
+                req.update(dict(
+                    from_idx=req['from'] - 1,
+                    to_idx=req['from'] - 1 + req['size'],
+                    links=dict(
+                        prev={'from': max(1, req['from'] - req['size'])},
+                        self={'from': req['from']},
+                        next={'from': req['from'] + req['size']},
+                    )
+                ))
+
+            if req['to_idx'] > _max_results:
+                raise SearchPaginationRESTError(
+                    description=(
+                        'Maximum number of {} results have been reached.'
+                        .format(_max_results))
+                )
+
+            return f(self, pagination=req, *args, **kwargs)
+        return inner
+    return decorator
+
+
 class RecordsListOptionsResource(MethodView):
     """Resource for displaying options about records list/item views."""
 
@@ -464,7 +555,7 @@ class RecordsListResource(ContentNegotiatedMethodView):
 
     view_name = '{0}_list'
 
-    def __init__(self, resolver=None, minter_name=None, pid_type=None,
+    def __init__(self, minter_name=None, pid_type=None,
                  pid_fetcher=None, read_permission_factory=None,
                  create_permission_factory=None,
                  list_permission_factory=None,
@@ -487,7 +578,6 @@ class RecordsListResource(ContentNegotiatedMethodView):
             },
             default_media_type=default_media_type,
             **kwargs)
-        self.resolver = resolver
         self.pid_type = pid_type
         self.minter = current_pidstore.minters[minter_name]
         self.pid_fetcher = current_pidstore.fetchers[pid_fetcher]
@@ -506,7 +596,12 @@ class RecordsListResource(ContentNegotiatedMethodView):
         self.indexer_class = indexer_class
 
     @need_record_permission('list_permission_factory')
-    def get(self, **kwargs):
+    @use_paginate_args(
+        default_size=lambda self: current_app.config.get(
+            'RECORDS_REST_DEFAULT_RESULTS_SIZE', 10),
+        max_results=lambda self: self.max_result_window,
+    )
+    def get(self, pagination=None, **kwargs):
         """Search records.
 
         Permissions: the `list_permission_factory` permissions are
@@ -515,16 +610,13 @@ class RecordsListResource(ContentNegotiatedMethodView):
         :returns: Search result containing hits and aggregations as
                   returned by invenio-search.
         """
-        page = request.values.get('page', 1, type=int)
-        size = request.values.get('size', 10, type=int)
-        if page * size >= self.max_result_window:
-            raise MaxResultWindowRESTError()
-
         # Arguments that must be added in prev/next links
         urlkwargs = dict()
         search_obj = self.search_class()
         search = search_obj.with_preference_param().params(version=True)
-        search = search[(page - 1) * size:page * size]
+        search = search[pagination['from_idx']:pagination['to_idx']]
+        if not lt_es7:
+            search = search.extra(track_total_hits=True)
 
         search, qs_kwargs = self.search_factory(search)
         urlkwargs.update(qs_kwargs)
@@ -532,19 +624,24 @@ class RecordsListResource(ContentNegotiatedMethodView):
         # Execute search
         search_result = search.execute()
 
-        # Generate links for prev/next
-        urlkwargs.update(
-            size=size,
-            _external=True,
-        )
+        # Generate links for self/prev/next
+        total = search_result.hits.total if lt_es7 else \
+            search_result.hits.total['value']
         endpoint = '.{0}_list'.format(
             current_records_rest.default_endpoint_prefixes[self.pid_type])
-        links = dict(self=url_for(endpoint, page=page, **urlkwargs))
-        if page > 1:
-            links['prev'] = url_for(endpoint, page=page - 1, **urlkwargs)
-        if size * page < search_result.hits.total and \
-                size * page < self.max_result_window:
-            links['next'] = url_for(endpoint, page=page + 1, **urlkwargs)
+        urlkwargs.update(size=pagination['size'], _external=True)
+
+        links = {}
+
+        def _link(name):
+            urlkwargs.update(pagination['links'][name])
+            links[name] = url_for(endpoint, **urlkwargs)
+
+        _link('self')
+        if pagination['from_idx'] >= 1:
+            _link('prev')
+        if pagination['to_idx'] < min(total, self.max_result_window):
+            _link('next')
 
         return self.make_response(
             pid_fetcher=self.pid_fetcher,
@@ -619,16 +716,13 @@ class RecordResource(ContentNegotiatedMethodView):
 
     view_name = '{0}_item'
 
-    def __init__(self, resolver=None, read_permission_factory=None,
+    def __init__(self, read_permission_factory=None,
                  update_permission_factory=None,
                  delete_permission_factory=None, default_media_type=None,
                  links_factory=None,
                  loaders=None, search_class=None, indexer_class=None,
                  **kwargs):
-        """Constructor.
-
-        :param resolver: Persistent identifier resolver instance.
-        """
+        """Constructor."""
         super(RecordResource, self).__init__(
             method_serializers={
                 'DELETE': {'*/*': lambda *args: make_response(*args), },
@@ -641,7 +735,6 @@ class RecordResource(ContentNegotiatedMethodView):
             },
             default_media_type=default_media_type,
             **kwargs)
-        self.resolver = resolver
         self.search_class = search_class
         self.read_permission_factory = read_permission_factory
         self.update_permission_factory = update_permission_factory
@@ -819,13 +912,20 @@ class SuggestResource(MethodView):
             if val:
                 # Get completion suggestions
                 opts = copy.deepcopy(self.suggesters[k])
-
+                # Context suggester compatibility adjustment
                 if 'context' in opts.get('completion', {}):
-                    ctx_field = opts['completion']['context']
+                    context_key = 'context'
+                elif 'contexts' in opts.get('completion', {}):
+                    context_key = 'contexts'
+                else:
+                    context_key = None
+
+                if context_key:
+                    ctx_field = opts['completion'][context_key]
                     ctx_val = request.values.get(ctx_field)
                     if not ctx_val:
                         raise SuggestMissingContextRESTError
-                    opts['completion']['context'] = {
+                    opts['completion'][context_key] = {
                         ctx_field: ctx_val
                     }
 
@@ -841,7 +941,11 @@ class SuggestResource(MethodView):
         # Add completions
         s = self.search_class()
         for field, val, opts in completions:
-            s = s.suggest(field, val, **opts)
+            source = opts.pop('_source', None)
+            if source is not None and ES_VERSION[0] >= 5:
+                s = s.source(source).suggest(field, val, **opts)
+            else:
+                s = s.suggest(field, val, **opts)
 
         if ES_VERSION[0] == 2:
             # Execute search

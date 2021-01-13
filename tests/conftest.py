@@ -24,6 +24,7 @@ from elasticsearch.exceptions import RequestError
 from flask import Flask, url_for
 from flask_login import LoginManager, UserMixin
 from helpers import create_record
+from invenio_config import InvenioConfigDefault
 from invenio_db import InvenioDB
 from invenio_db import db as db_
 from invenio_indexer import InvenioIndexer
@@ -34,6 +35,7 @@ from invenio_records import InvenioRecords
 from invenio_rest import InvenioREST
 from invenio_search import InvenioSearch, RecordsSearch, current_search, \
     current_search_client
+from invenio_search.errors import IndexAlreadyExistsError
 from sqlalchemy_utils.functions import create_database, database_exists
 
 from invenio_records_rest import InvenioRecordsREST, config
@@ -125,11 +127,13 @@ def app(request, search_class):
         ACCOUNTS_JWT_ENABLE=False,
         INDEXER_DEFAULT_DOC_TYPE='testrecord',
         INDEXER_DEFAULT_INDEX=search_class.Meta.index,
+        REST_MIMETYPE_QUERY_ARG_NAME='format',
         RECORDS_REST_ENDPOINTS=copy.deepcopy(config.RECORDS_REST_ENDPOINTS),
         RECORDS_REST_DEFAULT_CREATE_PERMISSION_FACTORY=None,
         RECORDS_REST_DEFAULT_DELETE_PERMISSION_FACTORY=None,
         RECORDS_REST_DEFAULT_READ_PERMISSION_FACTORY=None,
         RECORDS_REST_DEFAULT_UPDATE_PERMISSION_FACTORY=None,
+        RECORDS_REST_DEFAULT_RESULTS_SIZE=10,
         RECORDS_REST_DEFAULT_SEARCH_INDEX=search_class.Meta.index,
         RECORDS_REST_FACETS={
             search_class.Meta.index: {
@@ -180,6 +184,7 @@ def app(request, search_class):
     InvenioRecords(app)
     InvenioIndexer(app)
     InvenioPIDStore(app)
+    InvenioConfigDefault(app)
     search = InvenioSearch(app)
     search.register_mappings(search_class.Meta.index, 'mock_module.mappings')
     InvenioRecordsREST(app)
@@ -211,12 +216,27 @@ def es(app):
     """Elasticsearch fixture."""
     try:
         list(current_search.create())
-    except RequestError:
+    except (RequestError, IndexAlreadyExistsError):
         list(current_search.delete(ignore=[404]))
         list(current_search.create(ignore=[400]))
     current_search_client.indices.refresh()
     yield current_search_client
     list(current_search.delete(ignore=[404]))
+
+
+@pytest.yield_fixture()
+def prefixed_es(app):
+    """Elasticsearch fixture."""
+    app.config['SEARCH_INDEX_PREFIX'] = 'test-'
+    try:
+        list(current_search.create())
+    except (RequestError, IndexAlreadyExistsError):
+        list(current_search.delete(ignore=[404]))
+        list(current_search.create(ignore=[400]))
+    current_search_client.indices.refresh()
+    yield current_search_client
+    list(current_search.delete(ignore=[404]))
+    app.config['SEARCH_INDEX_PREFIX'] = ''
 
 
 def record_indexer_receiver(sender, json=None, record=None, index=None,
